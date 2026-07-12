@@ -1,0 +1,101 @@
+// TeaVM AOT harness: compiles the Vita backend + launcher against the API of
+// the user's own jar, then (task `transpile`) runs TeaVM's C backend over
+// stubs -> backend -> user jar to emit work/generated_c/.
+//
+// The user's jar never leaves the machine and nothing derived from it is
+// written inside the repo tree (all outputs go to ../work).
+
+plugins {
+    id 'java'
+}
+
+def workDir = file("${rootDir}/../work")
+def stsJar = providers.environmentVariable('STS_JAR')
+        .orElse(providers.provider {
+            def p = new File(workDir, 'jar_path.txt')
+            p.exists() ? p.text.trim() : ''
+        }).get()
+
+if (!stsJar) {
+    logger.warn('STS_JAR not set and work/jar_path.txt missing — run `make extract` first.')
+}
+
+// Runs on the invoking JDK; TeaVM tooling requires 17+. The game's own
+// bytecode stays Java 8; TeaVM happily links mixed-version bytecode.
+
+repositories {
+    mavenCentral()
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs = ['src/main/java',
+                       '../backend/src/main/java',
+                       '../backend/stubs/src/main/java',
+                       "${workDir}/gen/java"]
+        }
+        resources {
+            srcDirs = ['src/main/resources', "${workDir}/gen/resources"]
+        }
+    }
+}
+
+// The gson type manifest is regenerated from the user's jar on every build
+// (TypeToken signatures, instantiation factories, generic field elements).
+tasks.register('typeManifest', Exec) {
+    group = 'stsvita'
+    workingDir = "${rootDir}/.."
+    commandLine 'python3', 'pipeline/typemanifest.py', '--work', workDir
+}
+compileJava.dependsOn 'typeManifest'
+processResources.dependsOn 'typeManifest'
+
+// TeaVM version is pinned: the C backend moves fast and the runtime patcher
+// targets this release.
+def teavmVersion = '0.15.0'
+
+dependencies {
+    implementation "org.teavm:teavm-core:${teavmVersion}"
+    implementation "org.teavm:teavm-tooling:${teavmVersion}"
+    implementation "org.teavm:teavm-classlib:${teavmVersion}"
+    implementation "org.teavm:teavm-interop:${teavmVersion}"
+
+    // API-only: the game bundles its own copy of libGDX inside the fat jar;
+    // the backend compiles against the matching public version from Maven
+    // Central (Apache-2.0) so the repo needs nothing from the game. Spine
+    // classes come from the user's jar at TeaVM link time.
+    compileOnly 'com.badlogicgames.gdx:gdx:1.9.5'
+    compileOnly 'com.badlogicgames.gdx:gdx-controllers:1.9.5'
+
+    // The launcher references game classes (CardCrawlGame, Settings);
+    // resolved against the user's own jar, compile-only.
+    if (stsJar) {
+        compileOnly files(stsJar)
+    }
+}
+
+tasks.register('transpile', JavaExec) {
+    group = 'stsvita'
+    description = 'Run TeaVM C backend over stubs + backend + the user jar'
+    dependsOn compileJava
+    mainClass = 'com.stsvita.build.BuildVita'
+    classpath = sourceSets.main.runtimeClasspath
+    args = [stsJar, "${workDir}/generated_c"]
+    // TeaVM whole-program analysis over ~7k classes is memory-hungry
+    maxHeapSize = '4g'
+    // Patch the freshly generated C for the Vita target right after transpiling.
+    finalizedBy 'vitaPatchRuntime'
+}
+
+// Activate TeaVM's homebrew (TEAVM_PSP) runtime paths for the Vita target.
+// No-op for the desktop-GL harness, which never defines TEAVM_VITA. Kept a
+// standalone Exec task (not a doLast) because Gradle removed Project.exec from
+// task-action scope.
+tasks.register('vitaPatchRuntime', Exec) {
+    group = 'stsvita'
+    description = 'Apply the TEAVM_VITA runtime patch to the generated C'
+    commandLine 'python3',
+        "${rootDir}/../tools/vita_patch_runtime.py",
+        "${workDir}/generated_c"
+}

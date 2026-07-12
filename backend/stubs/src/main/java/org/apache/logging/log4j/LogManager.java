@@ -1,0 +1,116 @@
+package org.apache.logging.log4j;
+
+/** Shadow of log4j-api LogManager: loggers print straight to stdout. */
+public final class LogManager {
+
+    public static Logger getLogger(String name) {
+        return new StdoutLogger(shortName(name));
+    }
+
+    public static Logger getLogger(Class<?> clazz) {
+        return new StdoutLogger(clazz.getSimpleName());
+    }
+
+    public static Logger getLogger() {
+        return new StdoutLogger("?");
+    }
+
+    public static void shutdown() {
+    }
+
+    private static String shortName(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot >= 0 ? name.substring(dot + 1) : name;
+    }
+
+    private LogManager() {}
+}
+
+class StdoutLogger implements Logger {
+
+    private final String tag;
+
+    StdoutLogger(String tag) {
+        this.tag = tag;
+    }
+
+    private void out(String level, String message) {
+        System.out.println(level + " " + tag + "> " + message);
+    }
+
+    @Override
+    public void trace(String message) {
+        out("TRACE", message);
+    }
+
+    @Override
+    public void debug(String message) {
+        out("DEBUG", message);
+    }
+
+    @Override
+    public void info(String message) {
+        out("INFO", message);
+    }
+
+    @Override
+    public void info(Object message) {
+        out("INFO", String.valueOf(message));
+    }
+
+    @Override
+    public void info(String message, Object param) {
+        out("INFO", message + " " + param);
+    }
+
+    @Override
+    public void info(String message, Object... params) {
+        out("INFO", message);
+    }
+
+    @Override
+    public void info(String message, Throwable t) {
+        out("INFO", message + " :: " + t);
+    }
+
+    @Override
+    public void warn(String message) {
+        out("WARN", message);
+    }
+
+    @Override
+    public void warn(String message, Throwable t) {
+        out("WARN", message + " :: " + t);
+    }
+
+    @Override
+    public void error(String message) {
+        out("ERROR", message);
+    }
+
+    @Override
+    public void error(String message, Object... params) {
+        out("ERROR", message);
+    }
+
+    @Override
+    public void error(String message, Throwable t) {
+        out("ERROR", message + " :: " + t);
+        if (t != null) {
+            t.printStackTrace();
+        }
+    }
+
+    @Override
+    public void fatal(String message) {
+        out("FATAL", message);
+    }
+
+    @Override
+    public void catching(Throwable t) {
+        out("ERROR", "caught: " + t);
+        if (t != null) {
+            t.printStackTrace();
+        }
+    }
+}
