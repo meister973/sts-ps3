@@ -1,20 +1,22 @@
 # STSPSVITA
 
-Build your own PlayStation Vita homebrew package for Slay the Spire from your
-legally purchased PC copy.
+STSPSVITA is a build pipeline for bringing Slay the Spire to PlayStation Vita.
+Point it at your own PC copy of the game, run one script, and it produces a
+Vita-ready VPK plus optimized assets for your device.
 
-This repository contains no Slay the Spire code, assets, or compiled game
-output. The build runs locally, reads your `desktop-1.0.jar`, produces Vita
-assets, and builds a VPK for your own hacked PS Vita.
+The repo ships only the porting tools and Vita-specific runtime code. It does
+not include Slay the Spire game code, game assets, generated VPKs, or generated
+asset packs; everything derived from the game is created locally from your own
+`desktop-1.0.jar`.
 
-Status: pre-alpha. Expect rough edges, long build times, and
-hardware-specific issues.
+Status: pre-alpha. Expect rough edges, long build times, and hardware-specific
+issues.
 
 ## No Prebuilt VPK
 
-This project cannot ship a ready-made VPK. The Vita executable is generated
+This project does not ship a ready-made VPK. The Vita executable is generated
 from your local `desktop-1.0.jar`, so a public VPK would contain transformed
-Slay the Spire game code. The safe distribution model is:
+Slay the Spire game code. The intended distribution model is:
 
 1. Clone this source repo.
 2. Provide your own legally purchased `desktop-1.0.jar`.
