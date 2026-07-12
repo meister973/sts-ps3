@@ -162,7 +162,11 @@ def next_pot(n: int) -> int:
     return p
 
 
-def pad_npot_atlas_pages(dst_root: Path, jobs: int) -> list[Path]:
+def image_magick() -> str | None:
+    return shutil.which("magick") or shutil.which("convert")
+
+
+def pad_npot_atlas_pages(dst_root: Path, jobs: int, magick_cmd: str) -> list[Path]:
     """Pad every non-power-of-two .atlas page to POT dimensions.
 
     The Vita GPU (GXM) mangles NPOT texture sampling — the Ironclad's
@@ -201,7 +205,7 @@ def pad_npot_atlas_pages(dst_root: Path, jobs: int) -> list[Path]:
     def pad(task: tuple[Path, int, int]) -> None:
         png, pw, ph = task
         subprocess.run(
-            ["magick", str(png), "-background", "none", "-gravity", "NorthWest",
+            [magick_cmd, str(png), "-background", "none", "-gravity", "NorthWest",
              "-extent", f"{pw}x{ph}", str(png)],
             check=True, capture_output=True)
 
@@ -301,9 +305,10 @@ def main() -> int:
         with ThreadPoolExecutor(max_workers=args.jobs) as ex:
             list(ex.map(lambda p: reencode_ogg(*p, args.audio_kbps), audio_jobs))
 
-    if not shutil.which("magick"):
+    magick_cmd = image_magick()
+    if not magick_cmd:
         sys.exit("error: NPOT atlas-page padding needs ImageMagick on PATH")
-    padded = pad_npot_atlas_pages(dst_root, args.jobs)
+    padded = pad_npot_atlas_pages(dst_root, args.jobs, magick_cmd)
 
     dds_encoded = dds_half = dds_skipped = dds_failed = 0
     if not args.no_dds:

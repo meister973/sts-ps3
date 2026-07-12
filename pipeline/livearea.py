@@ -33,9 +33,11 @@ TEMPLATE_XML = """<?xml version="1.0" encoding="utf-8" standalone="yes"?>
 </livearea>
 """
 
+MAGICK = shutil.which("magick") or shutil.which("convert")
+
 
 def magick(*args: str) -> None:
-    subprocess.run(["magick", *args], check=True)
+    subprocess.run([MAGICK, *args], check=True)
 
 
 def to_png8(path: Path) -> None:
@@ -65,8 +67,8 @@ def main() -> int:
     ap.add_argument("--lang", default="eng", help="title-logo language (title_logo/<lang>.png)")
     args = ap.parse_args()
 
-    if not shutil.which("magick"):
-        print("ImageMagick (`magick`) not found — needed to build LiveArea assets", file=sys.stderr)
+    if not MAGICK:
+        print("ImageMagick not found — needed to build LiveArea assets", file=sys.stderr)
         return 2
 
     assets = Path(args.work) / "assets_vita"

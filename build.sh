@@ -78,7 +78,11 @@ need_command python3
 need_command gcc
 need_command gradle
 need_command cmake
-need_command magick
+need_command make
+need_command java
+if ! command -v magick >/dev/null 2>&1 && ! command -v convert >/dev/null 2>&1; then
+    die "ImageMagick not found on PATH (need magick or convert)"
+fi
 
 if [[ "$AUDIO_KBPS" != "0" ]]; then
     need_command ffmpeg
