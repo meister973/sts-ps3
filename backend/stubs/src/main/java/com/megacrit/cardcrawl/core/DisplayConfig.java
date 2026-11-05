@@ -4,8 +4,9 @@ package com.megacrit.cardcrawl.core;
  * Shadow of the game's display-config reader (third game-package shadow;
  * see AsyncSaver for the policy). Justification: the original is desktop
  * display-mode negotiation via java.util.Scanner — which TeaVM cannot host —
- * and on a Vita every value it negotiates is a hardware constant.
- * Public surface matches the original; getters return the Vita's reality.
+ * and on a console every value it negotiates is a hardware constant.
+ * Public surface matches the original; getters return the PS3's 720p output,
+ * which must match VitaApplication.Config or layout and framebuffer disagree.
  */
 public class DisplayConfig {
 
@@ -18,11 +19,11 @@ public class DisplayConfig {
     }
 
     public int getWidth() {
-        return 960;
+        return 1280;
     }
 
     public int getHeight() {
-        return 544;
+        return 720;
     }
 
     public int getMaxFPS() {
@@ -50,6 +51,6 @@ public class DisplayConfig {
 
     @Override
     public String toString() {
-        return "960x544 @60 fullscreen vsync (Vita)";
+        return "1280x720 @60 fullscreen vsync (PS3)";
     }
 }

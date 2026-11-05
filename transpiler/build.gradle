@@ -95,6 +95,6 @@ tasks.register('vitaPatchRuntime', Exec) {
     group = 'stsvita'
     description = 'Apply the TEAVM_VITA runtime patch to the generated C'
     commandLine 'python3',
-        "${rootDir}/../tools/vita_patch_runtime.py",
+        "${rootDir}/../ps3/patch_runtime.py",
         "${workDir}/generated_c"
 }

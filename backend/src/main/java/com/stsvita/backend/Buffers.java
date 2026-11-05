@@ -121,6 +121,15 @@ public final class Buffers {
         return addr(buffer);
     }
 
+    /** Byte extent supplied to the PS3's immediate native client-array copy. */
+    public static int remainingBytes(Buffer buffer) {
+        int remaining = buffer.remaining();
+        if (buffer instanceof ByteBuffer) return remaining;
+        if (buffer instanceof ShortBuffer || buffer instanceof java.nio.CharBuffer) return remaining << 1;
+        if (buffer instanceof FloatBuffer || buffer instanceof IntBuffer) return remaining << 2;
+        return remaining << 3;
+    }
+
     private static byte[] drain(ByteBuffer b) {
         byte[] d = new byte[b.remaining()];
         int p = b.position();

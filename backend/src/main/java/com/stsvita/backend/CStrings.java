@@ -14,7 +14,7 @@ public final class CStrings {
     }
 
     public static String fromC(Address a) {
-        if (a.toInt() == 0) {
+        if (a.toLong() == 0) {
             return null;
         }
         int len = 0;

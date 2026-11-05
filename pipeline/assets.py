@@ -292,10 +292,11 @@ def pad_npot_atlas_pages(dst_root: Path, jobs: int) -> list[Path]:
 
     def pad(task: tuple[Path, int, int]) -> None:
         png, pw, ph = task
-        subprocess.run(
-            ["magick", str(png), "-background", "none", "-gravity", "NorthWest",
-             "-extent", f"{pw}x{ph}", str(png)],
-            check=True, capture_output=True)
+        from PIL import Image
+        with Image.open(png) as source:
+            padded = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
+            padded.paste(source.convert("RGBA"), (0, 0))
+            padded.save(png)
 
     with ThreadPoolExecutor(max_workers=jobs) as ex:
         list(ex.map(pad, tasks))
@@ -408,8 +409,6 @@ def main() -> int:
             print(f"audio: {len(audio_failed)} of {len(audio_jobs)} OGGs could "
                   f"not be re-encoded and were copied unchanged")
 
-    if not shutil.which("magick"):
-        sys.exit("error: NPOT atlas-page padding needs ImageMagick on PATH")
     padded = pad_npot_atlas_pages(dst_root, args.jobs)
 
     dds_encoded = dds_half = dds_quarter = dds_skipped = dds_failed = 0

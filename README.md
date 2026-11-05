@@ -1,3 +1,9 @@
+# Experimental PS3 fork
+
+Local PS3 title/menu milestone based on STSPSVITA. See
+[PS3 build and validation notes](docs/ps3-menu.md). Use `ps3/build.ps1 -Prepare`
+with your own game JAR. The upstream Vita instructions are retained below.
+
 # STSPSVITA
 
 STSPSVITA is a build pipeline for bringing Slay the Spire to PlayStation Vita.

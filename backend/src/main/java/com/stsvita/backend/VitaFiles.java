@@ -14,7 +14,7 @@ import com.badlogic.gdx.files.FileHandle;
  */
 public class VitaFiles implements Files {
 
-    public static final String DATA = "ux0:data/stsvita/";
+    public static final String DATA = "/dev_hdd0/game/STSP00001/USRDIR/";
 
     /**
      * Where the read-only asset payload lives. The full VPK bundles it at
@@ -89,11 +89,6 @@ public class VitaFiles implements Files {
     }
 
     private static String assetRoot() {
-        if (VitaNatives.isHostHarness() != 0) {
-            return "app0:/assets/";
-        }
-        return new java.io.File("app0:/assets").exists()
-                ? "app0:/assets/"
-                : DATA + "assets/";
+        return DATA + "assets/";
     }
 }

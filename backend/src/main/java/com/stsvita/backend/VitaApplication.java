@@ -25,8 +25,8 @@ import com.badlogic.gdx.graphics.g2d.Gdx2DPixmap;
 public class VitaApplication implements Application {
 
     public static class Config {
-        public int width = 960;
-        public int height = 544;
+        public int width = 1280;
+        public int height = 720;
         public boolean vsync = true;
     }
 
@@ -64,7 +64,9 @@ public class VitaApplication implements Application {
 
     private void mainLoop() {
         graphics.init();
+        VitaNatives.log("[ps3] Original CardCrawlGame.create starting");
         listener.create();
+        VitaNatives.log("[ps3] Original CardCrawlGame.create returned");
         Gdx2DPixmap.dumpStats("after-create");
         // The GL viewport is owned by the backend, exactly as LWJGL does in
         // its mainLoop (glViewport then resize): StS's create() calls
@@ -79,6 +81,7 @@ public class VitaApplication implements Application {
         // loads the player actually sees (boss atlases, scene backgrounds).
         VitaNatives.texSpillEnable();
 
+        int menuFrames = 0;
         while (running) {
             long hitchStart = VitaNatives.micros();
             long wallStart = VitaNatives.wallMicros();
@@ -88,6 +91,11 @@ public class VitaApplication implements Application {
             executeRunnables();
             long gameStart = VitaNatives.micros();
             listener.render();
+            if (++menuFrames == 300) {
+                VitaNatives.log("[ps3] Rendered 300 original game frames; mode="
+                        + com.megacrit.cardcrawl.core.CardCrawlGame.mode
+                        + " mainMenu=" + (com.megacrit.cardcrawl.core.CardCrawlGame.mainMenuScreen != null));
+            }
             long swapStart = VitaNatives.micros();
             graphics.endFrame(); // swap + vsync + frame timing
             long frameEnd = VitaNatives.micros();

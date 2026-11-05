@@ -80,7 +80,7 @@ public class VitaController implements Controller {
 
     @Override
     public String getName() {
-        return "PS Vita";
+        return "PLAYSTATION(R)3 Controller";
     }
 
     @Override

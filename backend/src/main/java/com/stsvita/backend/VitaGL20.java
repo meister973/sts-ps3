@@ -1338,8 +1338,12 @@ public class VitaGL20 implements GL20 {
 
     @Override
     public void glVertexAttribPointer(int p0, int p1, int p2, boolean p3, int p4, Buffer p5) {
-        nglVertexAttribPointer(p0, p1, p2, p3, p4, Buffers.addr(p5));
+        int bytes = Buffers.remainingBytes(p5);
+        nstsvVertexAttribPointerSnapshot(p0, p1, p2, p3, p4, Buffers.addr(p5), bytes);
     }
+
+    @Import(name = "stsv_glVertexAttribPointerSnapshot")
+    private static native void nstsvVertexAttribPointerSnapshot(int p0, int p1, int p2, boolean p3, int p4, Address p5, int bytes);
 
     @Import(name = "glVertexAttribPointer")
     private static native void nglVertexAttribPointer(int p0, int p1, int p2, boolean p3, int p4, Address p5);

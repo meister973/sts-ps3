@@ -7,6 +7,10 @@ work/
 /build/
 out/
 *.vpk
+*.elf
+*.self
+*.pkg
+/runs/
 *.log
 
 # Local crash/core dumps.

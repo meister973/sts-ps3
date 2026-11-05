@@ -8,12 +8,27 @@
 #ifndef STSV_GL_H
 #define STSV_GL_H
 
-#if defined(__vita__) || defined(VITA)
+#if defined(STSV_PS3) || defined(__PPU__)
+#include "ps3_gl.h"
+#elif defined(__vita__) || defined(VITA)
 #include <vitaGL.h>
 #else
 #define GL_GLEXT_PROTOTYPES 1
 #include <GL/gl.h>
 #include <GL/glext.h>
+#endif
+
+/* Client-array addresses may move when TeaVM allocates between attribute setup
+ * and draw. PS3 copies immediately; ordinary GL backends retain their API path. */
+#if defined(STSV_PS3) || defined(__PPU__)
+void stsv_glVertexAttribPointerSnapshot(int index,int size,int type,int normalized,
+                                      int stride,const void *pointer,int available_bytes);
+#else
+static inline void stsv_glVertexAttribPointerSnapshot(int index,int size,int type,int normalized,
+                                                     int stride,const void *pointer,int available_bytes) {
+    (void)available_bytes;
+    glVertexAttribPointer(index,size,type,normalized,stride,pointer);
+}
 #endif
 
 void stsv_glShaderSource(int shader, const void *source);

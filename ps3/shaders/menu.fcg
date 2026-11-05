@@ -1,0 +1,6 @@
+/* All menu sprites and fonts share this offline RSX program. Shapes use a white texel. */
+void main(float4 color : COLOR0, float2 uv : TEXCOORD0, uniform sampler2D image,
+          out float4 out_color : COLOR)
+{
+    out_color = tex2D(image, uv) * color;
+}
