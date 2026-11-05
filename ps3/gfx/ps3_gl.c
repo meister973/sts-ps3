@@ -51,6 +51,7 @@ typedef struct { void *data; size_t size; int live,usage; } Buffer;
 typedef struct {
     void *pixels; u32 offset,pitch,bytes; int width,height,format;
     int live,min_filter,mag_filter,wrap_s,wrap_t;
+    int opaque; /* GL RGB format: sample alpha as 1 */
 } Texture;
 typedef struct { int live,texture,depth_renderbuffer,stencil_renderbuffer; } Framebuffer;
 typedef struct { int live,width,height,format; } Renderbuffer;
@@ -114,6 +115,14 @@ static u32 remap_identity(void) {
     return GCM_TEXTURE_REMAP_MODE(GCM_TEXTURE_REMAP_ORDER_XYXY,
         GCM_TEXTURE_REMAP_COLOR_A,GCM_TEXTURE_REMAP_COLOR_R,GCM_TEXTURE_REMAP_COLOR_G,GCM_TEXTURE_REMAP_COLOR_B,
         GCM_TEXTURE_REMAP_TYPE_REMAP,GCM_TEXTURE_REMAP_TYPE_REMAP,GCM_TEXTURE_REMAP_TYPE_REMAP,GCM_TEXTURE_REMAP_TYPE_REMAP);
+}
+/* GL's COMPRESSED_RGB_S3TC_DXT1 decodes the 3-color mode's fourth code as
+ * opaque black, but the RSX always reads DXT1 with 1-bit alpha. Forcing alpha
+ * to one keeps JPG-derived layers from showing 4x4 holes. */
+static u32 remap_opaque(void) {
+    return GCM_TEXTURE_REMAP_MODE(GCM_TEXTURE_REMAP_ORDER_XYXY,
+        GCM_TEXTURE_REMAP_COLOR_A,GCM_TEXTURE_REMAP_COLOR_R,GCM_TEXTURE_REMAP_COLOR_G,GCM_TEXTURE_REMAP_COLOR_B,
+        GCM_TEXTURE_REMAP_TYPE_ONE,GCM_TEXTURE_REMAP_TYPE_REMAP,GCM_TEXTURE_REMAP_TYPE_REMAP,GCM_TEXTURE_REMAP_TYPE_REMAP);
 }
 static int surface_width(void) { return bound_framebuffer?textures[framebuffers[bound_framebuffer].texture].width:(int)width; }
 static int surface_height(void) { return bound_framebuffer?textures[framebuffers[bound_framebuffer].texture].height:(int)height; }
@@ -221,6 +230,29 @@ int stsv_gfx_width(void){return width;}
 int stsv_gfx_height(void){return height;}
 int stsv_is_host_harness(void){return 0;}
 void stsv_set_vsync(int on){if(ctx)gcmSetFlipMode(on?GCM_FLIP_VSYNC:GCM_FLIP_HSYNC);}
+/* The test harness lists frame numbers, one per line, in this USRDIR file. */
+#define CAPTURE_REQUEST_PATH "/dev_hdd0/game/STSP00001/USRDIR/sts-capture-menu"
+#define CAPTURE_MAX 64
+int stsv_gfx_dump_frame(const char *path);
+static void capture_if_requested(unsigned presented){
+    static unsigned frames[CAPTURE_MAX];
+    static int count=-1;
+    if(count<0){
+        unsigned frame;
+        FILE *request=fopen(CAPTURE_REQUEST_PATH,"r");
+        count=0;
+        if(!request)return;
+        while(count<CAPTURE_MAX&&fscanf(request,"%u",&frame)==1)frames[count++]=frame;
+        fclose(request);
+        fprintf(stderr,"[PS3 capture] %d frame(s) requested\n",count);
+    }
+    for(int i=0;i<count;i++){
+        char path[64];
+        if(frames[i]!=presented)continue;
+        snprintf(path,sizeof(path),"/dev_hdd0/tmp/sts-frame-%u.ppm",presented);
+        stsv_gfx_dump_frame(path);
+    }
+}
 void stsv_swap_buffers(void){
     stsv_ps3_pump_callbacks();
     if(!ctx)return;
@@ -231,7 +263,7 @@ void stsv_swap_buffers(void){
     stsv_ps3_input_next_frame();
     if(presented==1||presented==600||presented%1800==0){char tag[32];snprintf(tag,sizeof(tag),"frame %u",presented);stsv_ps3_log_memory(tag);}
     if(presented%300==0){fprintf(stderr,"[PS3 frame] %u\n",presented);fflush(stderr);}
-    if(presented==900){FILE *capture=fopen("/dev_hdd0/game/STSP00001/USRDIR/sts-capture-menu","rb");if(capture){fclose(capture);stsv_gfx_dump_frame("/dev_hdd0/tmp/sts-menu.ppm");}}
+    capture_if_requested(presented);
     if(!first_flip)while(gcmGetFlipStatus())usleep(200);
     first_flip=0;gcmResetFlipStatus();
     gcmSetFlip(ctx,frame_index);rsxFlushBuffer(ctx);gcmSetWaitFlip(ctx);
@@ -317,7 +349,7 @@ static int allocate_texture(Texture *t,int w,int h,int format,u32 byte_count,u32
     if(byte_count>TEXTURE_BUDGET-texture_bytes){fprintf(stderr,"[PS3 texture] budget exceeded: %dx%d (%u), %s\n",w,h,byte_count,texture_path);set_error(GL_OUT_OF_MEMORY);return 0;}
     t->pixels=rsxMemalign(128,(byte_count+127)&~127u);
     if(!t->pixels||rsxAddressToOffset(t->pixels,&t->offset)){fprintf(stderr,"[PS3 texture] RSX allocation failed: %dx%d (%u, %u in use), %s\n",w,h,byte_count,texture_bytes,texture_path);if(t->pixels)rsxFree(t->pixels);t->pixels=NULL;set_error(GL_OUT_OF_MEMORY);return 0;}
-    t->width=w;t->height=h;t->format=format;t->pitch=row_pitch;t->bytes=byte_count;texture_bytes+=byte_count;
+    t->width=w;t->height=h;t->format=format;t->pitch=row_pitch;t->bytes=byte_count;t->opaque=0;texture_bytes+=byte_count;
     return 1;
 }
 static int components(int f){switch(f){case 0x1908:return 4;case 0x1907:return 3;case 0x190a:return 2;case 0x1909:case 0x1906:return 1;default:return 0;}}
@@ -366,8 +398,9 @@ void glCompressedTexImage2D(int target,int level,int format,int w,int h,int bord
     if(level<0||border||w<=0||h<=0||size<((w+3)/4)*((h+3)/4)*block){set_error(GL_INVALID_VALUE);return;}
     /* DXT storage consists of byte-defined blocks; do not byteswap as u32 texels. */
     u32 bytes=((w+3)/4)*((h+3)/4)*block;
-    if(allocate_texture(t,w,h,native,bytes,0)){
-        memcpy(t->pixels,data,bytes);upload_stats++;
+    /* Blocks are stored row by row: bind as linear with one block row per pitch. */
+    if(allocate_texture(t,w,h,native,bytes,(u32)((w+3)/4)*block)){
+        memcpy(t->pixels,data,bytes);upload_stats++;t->opaque=format==0x83f0;
         if(diagnose){fprintf(stderr,"[PS3 DDS] done #%u offset=%08x copy=%u vram=%uKiB\n",serial,t->offset,bytes,(unsigned)(texture_bytes>>10));fflush(stderr);}
     }
 }
@@ -393,8 +426,8 @@ void glGenerateMipmap(int target){if(target!=0x0de1)set_error(GL_INVALID_ENUM);/
 static int texture_wrap(int value){switch(value){case 0x2901:return GCM_TEXTURE_REPEAT;case 0x8370:return GCM_TEXTURE_MIRRORED_REPEAT;default:return GCM_TEXTURE_CLAMP_TO_EDGE;}}
 static void bind_texture(Texture *t){
     gcmTexture d;memset(&d,0,sizeof(d));
-    d.format=t->format|(t->format==GCM_TEXTURE_FORMAT_A8R8G8B8?GCM_TEXTURE_FORMAT_LIN:0);
-    d.mipmap=1;d.dimension=GCM_TEXTURE_DIMS_2D;d.cubemap=GCM_FALSE;d.remap=remap_identity();
+    d.format=t->format|GCM_TEXTURE_FORMAT_LIN; /* every upload path stores rows linearly */
+    d.mipmap=1;d.dimension=GCM_TEXTURE_DIMS_2D;d.cubemap=GCM_FALSE;d.remap=t->opaque?remap_opaque():remap_identity();
     d.width=t->width;d.height=t->height;d.depth=1;d.location=GCM_LOCATION_RSX;d.pitch=t->pitch;d.offset=t->offset;
     rsxInvalidateTextureCache(ctx,GCM_INVALIDATE_TEXTURE);rsxLoadTexture(ctx,0,&d);
     rsxTextureControl(ctx,0,GCM_TRUE,0,0,GCM_TEXTURE_MAX_ANISO_1);

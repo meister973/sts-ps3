@@ -8,6 +8,8 @@ param(
     [string]$PpuDecoder = 'Recompiler (LLVM)',
     # One '<pollFrame> <hex Vita mask>' per event, held until the next event.
     [string[]]$PadScript,
+    # Game frames to save as sts-frame-<N>.ppm; the run passes once the last one is saved.
+    [ValidateRange(1, 10000000)][int[]]$CaptureFrames = @(900),
     [string]$Rpcs3Directory = $(if ($env:RPCS3_DIR) { $env:RPCS3_DIR } else { Join-Path $env:USERPROFILE 'Desktop\rpcs3' })
 )
 
@@ -24,7 +26,8 @@ $temporaryDirectory = Join-Path $rpcs3Root 'dev_hdd0\tmp'
 $gameLog = Join-Path $temporaryDirectory 'stsps3.log'
 # RPCS3 empties dev_hdd0/tmp at boot, so the capture request lives in the title's USRDIR.
 $captureFlag = Join-Path $usrDirectory 'sts-capture-menu'
-$capturePath = Join-Path $temporaryDirectory 'sts-menu.ppm'
+$lastCaptureFrame = ($CaptureFrames | Measure-Object -Maximum).Maximum
+$capturePath = Join-Path $temporaryDirectory "sts-frame-$lastCaptureFrame.ppm"
 $padScriptPath = Join-Path $usrDirectory 'sts-pad-script.txt'
 
 foreach ($required in @($executable, $elfPath, $sourceAssets)) {
@@ -132,7 +135,6 @@ Write-Output "Assets staged: $copied copied, $unchanged unchanged."
 
 # Preserve prior evidence before this game's main truncates its own log.
 Copy-SharedFile $gameLog (Join-Path $runDirectory 'previous-stsps3.log')
-if ($Capture) { Copy-SharedFile $capturePath (Join-Path $runDirectory 'previous-sts-menu.ppm') }
 $hadCaptureFlag = Test-Path -LiteralPath $captureFlag -PathType Leaf
 $previousCaptureFlag = if ($hadCaptureFlag) { [IO.File]::ReadAllBytes($captureFlag) } else { $null }
 $hadPadScript = Test-Path -LiteralPath $padScriptPath -PathType Leaf
@@ -145,7 +147,7 @@ $bootStarted = [datetime]::UtcNow
 
 try {
     if ($Capture) {
-        [IO.File]::WriteAllText($captureFlag, "frame900`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($captureFlag, (($CaptureFrames | Sort-Object) -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
     } elseif ($hadCaptureFlag) {
         # This title-specific sentinel must not request readback in a Null run.
         Remove-Item -LiteralPath $captureFlag
@@ -185,8 +187,7 @@ try {
         if ($Capture -and -not $process.HasExited) { [StsPs3ValidationWindows]::Hide([uint32]$process.Id) }
         $text = if (Test-FreshFile $gameLog $bootStarted) { Read-SharedText $gameLog } else { '' }
         if ($Capture) {
-            $found = $text -match '\[PS3 capture\].*sts-menu\.ppm.*: saved' -and
-                     $text -match '\[PS3 frame\]\s+(?:900|[1-9]\d{3,})\b' -and
+            $found = $text -match "\[PS3 capture\].*sts-frame-$lastCaptureFrame\.ppm.*: saved" -and
                      (Test-FreshFile $capturePath $bootStarted)
             if ($text -match '\[PS3 capture\].*: failed') { $failure = 'Game framebuffer capture failed.' }
         } else {
@@ -241,8 +242,12 @@ try {
     )) {
         Copy-SharedFile $entry[0] (Join-Path $runDirectory $entry[1])
     }
-    if ($Capture -and (Test-FreshFile $capturePath $bootStarted)) {
-        Copy-SharedFile $capturePath (Join-Path $runDirectory 'sts-menu.ppm')
+    if ($Capture) {
+        # Keep earlier frames even when the run dies before the last one.
+        foreach ($frame in $CaptureFrames) {
+            $framePath = Join-Path $temporaryDirectory "sts-frame-$frame.ppm"
+            if (Test-FreshFile $framePath $bootStarted) { Copy-SharedFile $framePath (Join-Path $runDirectory "sts-frame-$frame.ppm") }
+        }
     }
     $summary = [ordered]@{
         success = $found; capture = $Capture.IsPresent; failure = $failure; padEvents = @($PadScript).Count
@@ -256,7 +261,7 @@ try {
 }
 
 if ($found) {
-    Write-Output $(if ($Capture) { 'PASS: Vulkan capture run reached frame 900 and saved the original game framebuffer.' } else { 'PASS: headless Null logic run reached original game frame 300.' })
+    Write-Output $(if ($Capture) { "PASS: Vulkan capture run saved frames $($CaptureFrames -join ', ')." } else { 'PASS: headless Null logic run reached original game frame 300.' })
     exit 0
 }
 Write-Output "FAIL: $failure"
