@@ -1,51 +1,48 @@
-# Slay the Spire PS3: first menu milestone
+# Slay the Spire PS3: developer notes
 
-Use the owner's Steam desktop-1.0.jar read-only, copied into ignored game/.
-Convert the original Java game through STSPSVITA's TeaVM pipeline and replace
-the Vita backend's native services with PSL1GHT implementations. Reach the
-original title menu with rendering and controller navigation. Gameplay is a
-later milestone. This is an experimental port, not a screenshot recreation.
+The port takes the owner's Steam `desktop-1.0.jar` read-only and converts the
+original Java game through STSPSVITA's TeaVM pipeline. PSL1GHT implementations
+replace the Vita backend's native services. All four characters play in RPCS3
+with sound. Real PS3 validation is still open. No game-derived files are
+committed or published.
 
-Build in Docker using the existing balatro-ps3dev:2 toolchain plus JDK/Gradle.
-Use original English fonts initially; CJK font payload is excluded. Reuse
-the existing PS3 projects' native rendering and platform patterns, retaining
-their notices. Compile shaders offline; no runtime shader compiler is assumed.
+## Build
 
-Verification: cross-build the actual PPU ELF, boot in RPCS3, capture the menu
-and log. Real PS3 validation remains necessary. No game-derived files are
-committed or published. Output: build/ps3/slaythespire.elf and a private local PKG.
-
-## Local build
-
-The Steam installation stays unchanged. A copy of desktop-1.0.jar lives in
-ignored game/. All extracted assets and generated game code stay under work/.
+Players use `build_pkg.bat` (see `HOW_TO_BUILD_PKG.txt`). It runs the same
+script that developers use:
 
 ```powershell
-ps3/build.ps1 -Prepare
-ps3/run-rpcs3.ps1 -Capture -PadScript @('600 4000', '602 0')
-# Optional private installable package, containing your own transformed game:
-ps3/build.ps1 -Package
+ps3/build.ps1 -Prepare            # convert the JAR in game/ and compile
+ps3/build.ps1                     # recompile native changes only
+ps3/build.ps1 -Package            # also write build/ps3/slaythespire.pkg
+ps3/run-rpcs3.ps1 -Capture -CaptureFrames @(900,1800) -PadScript @('600 4000','606 0')
 ```
 
-The build reuses the local balatro-ps3dev:2 image and extends it with JDK 21,
-Gradle 8.14.3, and Pillow. TeaVM is pinned upstream to 0.15.0. Compilation and
-linking run in the sts-ps3-native Docker volume to avoid Windows file-share
-overhead. Re-run -Prepare after changing Java; native changes need only build.
+`ps3/Dockerfile` is self-contained. It pins the ps3dev nightly (toolchain,
+PSL1GHT, portlibs) and Gradle by hash, and adds JDK 21 and Pillow. TeaVM is
+pinned upstream to 0.15.0. Compilation runs in the `sts-ps3-native` Docker
+volume to avoid Windows file-share overhead. Re-run `-Prepare` after Java
+changes. Native changes need only a build.
 
-APPID STSP00001 reads /dev_hdd0/game/STSP00001/USRDIR/assets and writes its
-log to /dev_hdd0/tmp/stsps3.log. The emulator script stages assets, preserves
-run evidence, and only stops the emulator process it starts. Capture mode
-uses hidden Vulkan and requests a native framebuffer dump at frame 900.
+`ps3/make_pkg.py` writes the PKG. PSL1GHT's `pkg` tool aborts past about 1024
+entries and the assets alone are about 3700. For the same folder, the output of
+`make_pkg.py` is byte-identical to PSL1GHT's. The XMB icon comes from the
+player's own title art (`pipeline/make_icon.py`).
 
-## Scope and limits
+## Runtime layout
 
-This milestone uses the original CardCrawlGame and original English fonts.
-The starting Java heap is 80 MiB within the PS3's separate main-memory budget.
-The RSX sprite renderer uses offline Cg shaders and DXT textures. Audio is
-explicitly unavailable/muted. Custom shader effects currently use the basic
-sprite shader; mipmaps sample the base level. Unsupported GL operations report
-errors. Full gameplay, audio, and hardware performance are outside this spike.
+APPID `STSP00001` reads `/dev_hdd0/game/STSP00001/USRDIR/assets` and writes its
+log to `/dev_hdd0/tmp/stsps3.log`. The log reports memory headroom (`[ps3 mem]`)
+and frame statistics (`[PS3 frame]`). RPCS3 empties `/dev_hdd0/tmp` at boot, so
+`run-rpcs3.ps1` puts its capture and pad-script files in `USRDIR`.
+
+## Known limits
+
+- Custom shader effects (for example greyscale) use the basic sprite shader.
+- Mipmaps sample the base level only.
+- The Java heap is 128 MiB, which leaves about 25 MiB of system memory free in
+  combat.
 
 Upstream source: https://github.com/mmrmagno/stspsvita (MIT). The PS3 layer uses
-PSL1GHT and rendering/platform patterns from the local Space Cadet and CellJoker
-ports. No Sony SDK or runtime shader compiler is used.
+PSL1GHT and rendering and platform patterns from the Space Cadet and Balatro PS3
+ports. No Sony SDK is used.

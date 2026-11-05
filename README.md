@@ -1,8 +1,14 @@
 # Experimental PS3 fork
 
-Local PS3 title/menu milestone based on STSPSVITA. See
-[PS3 build and validation notes](docs/ps3-menu.md). Use `ps3/build.ps1 -Prepare`
-with your own game JAR. The upstream Vita instructions are retained below.
+A PS3 port of Slay the Spire based on STSPSVITA. It plays all four characters,
+with sound, in RPCS3. It has not been tested on a real PS3 yet.
+
+To build a PKG, install Docker Desktop and drag your own `desktop-1.0.jar` onto
+`build_pkg.bat`. See [HOW_TO_BUILD_PKG.txt](HOW_TO_BUILD_PKG.txt). No game code
+or art is in this repository. The build converts everything from your copy.
+
+Developer notes: [PS3 build and validation notes](docs/ps3-menu.md). The
+upstream Vita instructions are retained below.
 
 # STSPSVITA
 

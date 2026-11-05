@@ -389,7 +389,7 @@ static int allocate_texture(Texture *t,int w,int h,int format,u32 byte_count,u32
     if(t->pixels){rsxFree(t->pixels);texture_bytes-=t->bytes;t->pixels=NULL;t->bytes=0;}
     if(byte_count>TEXTURE_BUDGET-texture_bytes){fprintf(stderr,"[PS3 texture] budget exceeded: %dx%d (%u), %s\n",w,h,byte_count,texture_path);set_error(GL_OUT_OF_MEMORY);return 0;}
     t->pixels=rsxMemalign(128,(byte_count+127)&~127u);
-    if(!t->pixels||rsxAddressToOffset(t->pixels,&t->offset)){fprintf(stderr,"[PS3 texture] RSX allocation failed: %dx%d (%u, %u in use), %s\n",w,h,byte_count,texture_bytes,texture_path);if(t->pixels)rsxFree(t->pixels);t->pixels=NULL;set_error(GL_OUT_OF_MEMORY);return 0;}
+    if(!t->pixels||rsxAddressToOffset(t->pixels,&t->offset)){fprintf(stderr,"[PS3 texture] RSX allocation failed: %dx%d (%u, %u in use), %s\n",w,h,byte_count,(unsigned)texture_bytes,texture_path);if(t->pixels)rsxFree(t->pixels);t->pixels=NULL;set_error(GL_OUT_OF_MEMORY);return 0;}
     t->width=w;t->height=h;t->format=format;t->pitch=row_pitch;t->bytes=byte_count;t->opaque=0;texture_bytes+=byte_count;
     texture_changed(t);
     return 1;
