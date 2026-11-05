@@ -52,6 +52,7 @@ typedef struct {
     void *pixels; u32 offset,pitch,bytes; int width,height,format;
     int live,min_filter,mag_filter,wrap_s,wrap_t;
     int opaque; /* GL RGB format: sample alpha as 1 */
+    unsigned generation; /* bumped by texture_changed(); keys the RSX bind cache */
 } Texture;
 typedef struct { int live,texture,depth_renderbuffer,stencil_renderbuffer; } Framebuffer;
 typedef struct { int live,width,height,format; } Renderbuffer;
@@ -87,9 +88,16 @@ static float clear_color[4],clear_depth=1,depth_near,depth_far=1;
 static int clear_stencil;
 static size_t texture_bytes;
 static Texture white;
+static int programs_bound; /* the menu's single vertex/fragment pair stays loaded across draws */
+static Texture *bound_rsx_texture;
+static unsigned bound_rsx_generation;
+static unsigned texture_generation_counter;
+static int texture_cache_dirty=1;
+static void texture_changed(Texture *t){t->generation=++texture_generation_counter;texture_cache_dirty=1;}
 static char texture_path[192]="?";
 static int64_t upload_stats,subtex_stats;
 static unsigned compressed_upload_count,draw_count;
+static unsigned frame_draws,frame_vertices; /* reset at every swap */
 
 static void set_error(int error) { if(!error_code) error_code=error; }
 void stsv_gl_unsupported(const char *name) {
@@ -219,10 +227,11 @@ void stsv_gfx_init(void) {
     white.pixels=rsxMemalign(128,128);white.width=white.height=1;white.pitch=64;white.format=GCM_TEXTURE_FORMAT_A8R8G8B8;
     if(!white.pixels||rsxAddressToOffset(white.pixels,&white.offset))fatal("white texture failed");
     memset(white.pixels,255,128);white.min_filter=white.mag_filter=0x2601;
-    white.wrap_s=white.wrap_t=0x812f;
+    white.wrap_s=white.wrap_t=0x812f;texture_changed(&white);
     for(int i=0;i<16;i++){attributes[i].value[3]=1;attributes[i].size=4;attributes[i].type=GL_FLOAT;}
     view[2]=scissor[2]=width;view[3]=scissor[3]=height;
     gcmSetFlipMode(GCM_FLIP_VSYNC);gcmResetFlipStatus();
+    programs_bound=0;bound_rsx_texture=NULL;
     bind_surface();
     printf("[PS3 RSX] menu adapter %ux%u, sprite shader offline, %u MiB texture budget\n",width,height,TEXTURE_BUDGET/(1024*1024));
 }
@@ -257,12 +266,22 @@ void stsv_swap_buffers(void){
     stsv_ps3_pump_callbacks();
     if(!ctx)return;
     rsx_ring_make_room(ctx);
+    int64_t fence_start=stsv_ps3_monotonic_us();
     fence();stream_cursor=0;
     static unsigned presented;
+    static int64_t window_start,fence_us;
+    static unsigned window_draws,window_vertices;
+    int64_t now=stsv_ps3_monotonic_us();
+    fence_us+=now-fence_start;window_draws+=frame_draws;window_vertices+=frame_vertices;frame_draws=frame_vertices=0;
     presented++;
     stsv_ps3_input_next_frame();
     if(presented==1||presented==600||presented%1800==0){char tag[32];snprintf(tag,sizeof(tag),"frame %u",presented);stsv_ps3_log_memory(tag);}
-    if(presented%300==0){fprintf(stderr,"[PS3 frame] %u\n",presented);fflush(stderr);}
+    if(presented%300==0){
+        double frames=300.0;
+        fprintf(stderr,"[PS3 frame] %u: %.2f ms/frame, gpu wait %.2f ms, %.0f draws, %.0f vertices per frame\n",presented,
+                window_start?(now-window_start)/1000.0/frames:0.0,fence_us/1000.0/frames,window_draws/frames,window_vertices/frames);
+        fflush(stderr);window_start=now;fence_us=0;window_draws=window_vertices=0;
+    }
     capture_if_requested(presented);
     if(!first_flip)while(gcmGetFlipStatus())usleep(200);
     first_flip=0;gcmResetFlipStatus();
@@ -326,7 +345,7 @@ static int new_object(void *base,size_t stride,int cap){
 /* Texture.live is not the first field, unlike other object tables. */
 static int new_texture(void){for(int i=1;i<MAX_OBJECTS;i++)if(!textures[i].live){Texture *t=&textures[i];memset(t,0,sizeof(*t));t->live=1;t->min_filter=t->mag_filter=0x2601;t->wrap_s=t->wrap_t=0x2901;return i;}set_error(GL_OUT_OF_MEMORY);return 0;}
 void glGenTextures(int n,void *out){int *ids=out;if(n<0){set_error(GL_INVALID_VALUE);return;}for(int i=0;i<n;i++)ids[i]=new_texture();}
-void glDeleteTextures(int n,void *in){int *ids=in;if(n<0){set_error(GL_INVALID_VALUE);return;}fence();for(int i=0;i<n;i++)if(valid_id(ids[i])){Texture *t=&textures[ids[i]];if(t->pixels){rsxFree(t->pixels);texture_bytes-=t->bytes;}memset(t,0,sizeof(*t));for(int j=0;j<8;j++)if(bound_texture[j]==ids[i])bound_texture[j]=0;}}
+void glDeleteTextures(int n,void *in){int *ids=in;if(n<0){set_error(GL_INVALID_VALUE);return;}fence();for(int i=0;i<n;i++)if(valid_id(ids[i])){Texture *t=&textures[ids[i]];if(t->pixels){rsxFree(t->pixels);texture_bytes-=t->bytes;}memset(t,0,sizeof(*t));texture_changed(t);for(int j=0;j<8;j++)if(bound_texture[j]==ids[i])bound_texture[j]=0;}}
 int stsv_gl_gen_texture(void){return new_texture();}
 void stsv_gl_delete_texture(int id){glDeleteTextures(1,&id);}
 int glIsTexture(int id){return valid_id(id)&&textures[id].live;}
@@ -334,7 +353,8 @@ void glActiveTexture(int unit){unit-=0x84c0;if(unit<0||unit>=8){set_error(GL_INV
 void glBindTexture(int target,int id){if(target!=0x0de1){set_error(GL_INVALID_ENUM);return;}if(id && (!valid_id(id)||!textures[id].live)){set_error(GL_INVALID_VALUE);return;}bound_texture[active_texture]=id;}
 void glTexParameteri(int target,int name,int value){
     Texture *t=current_texture();if(target!=0x0de1||!t){set_error(GL_INVALID_OPERATION);return;}
-    switch(name){case 0x2800:t->mag_filter=value;break;case 0x2801:t->min_filter=value;break;case 0x2802:t->wrap_s=value;break;case 0x2803:t->wrap_t=value;break;default:set_error(GL_INVALID_ENUM);}
+    switch(name){case 0x2800:t->mag_filter=value;break;case 0x2801:t->min_filter=value;break;case 0x2802:t->wrap_s=value;break;case 0x2803:t->wrap_t=value;break;default:set_error(GL_INVALID_ENUM);return;}
+    texture_changed(t);
 }
 void glTexParameterf(int target,int name,float value){glTexParameteri(target,name,(int)value);}
 void glTexParameteriv(int t,int n,void *v){glTexParameteri(t,n,*(int*)v);}
@@ -350,6 +370,7 @@ static int allocate_texture(Texture *t,int w,int h,int format,u32 byte_count,u32
     t->pixels=rsxMemalign(128,(byte_count+127)&~127u);
     if(!t->pixels||rsxAddressToOffset(t->pixels,&t->offset)){fprintf(stderr,"[PS3 texture] RSX allocation failed: %dx%d (%u, %u in use), %s\n",w,h,byte_count,texture_bytes,texture_path);if(t->pixels)rsxFree(t->pixels);t->pixels=NULL;set_error(GL_OUT_OF_MEMORY);return 0;}
     t->width=w;t->height=h;t->format=format;t->pitch=row_pitch;t->bytes=byte_count;t->opaque=0;texture_bytes+=byte_count;
+    texture_changed(t);
     return 1;
 }
 static int components(int f){switch(f){case 0x1908:return 4;case 0x1907:return 3;case 0x190a:return 2;case 0x1909:case 0x1906:return 1;default:return 0;}}
@@ -367,6 +388,7 @@ static void upload_pixels(Texture *t,int x,int y,int w,int h,int format,const un
             dst[col*4]=a;dst[col*4+1]=r;dst[col*4+2]=g;dst[col*4+3]=b;
         }
     }
+    texture_changed(t);
 }
 void glTexImage2D(int target,int level,int internal,int w,int h,int border,int format,int type,void *data){
     (void)internal;
@@ -400,7 +422,7 @@ void glCompressedTexImage2D(int target,int level,int format,int w,int h,int bord
     u32 bytes=((w+3)/4)*((h+3)/4)*block;
     /* Blocks are stored row by row: bind as linear with one block row per pitch. */
     if(allocate_texture(t,w,h,native,bytes,(u32)((w+3)/4)*block)){
-        memcpy(t->pixels,data,bytes);upload_stats++;t->opaque=format==0x83f0;
+        memcpy(t->pixels,data,bytes);upload_stats++;t->opaque=format==0x83f0;texture_changed(t);
         if(diagnose){fprintf(stderr,"[PS3 DDS] done #%u offset=%08x copy=%u vram=%uKiB\n",serial,t->offset,bytes,(unsigned)(texture_bytes>>10));fflush(stderr);}
     }
 }
@@ -425,16 +447,19 @@ void stsv_tex_image_compressed(int target,int level,int format,int width,int hei
 void glGenerateMipmap(int target){if(target!=0x0de1)set_error(GL_INVALID_ENUM);/* Filters are restricted to level zero in bind_texture. */}
 static int texture_wrap(int value){switch(value){case 0x2901:return GCM_TEXTURE_REPEAT;case 0x8370:return GCM_TEXTURE_MIRRORED_REPEAT;default:return GCM_TEXTURE_CLAMP_TO_EDGE;}}
 static void bind_texture(Texture *t){
+    if(t==bound_rsx_texture&&t->generation==bound_rsx_generation&&!texture_cache_dirty)return;
     gcmTexture d;memset(&d,0,sizeof(d));
     d.format=t->format|GCM_TEXTURE_FORMAT_LIN; /* every upload path stores rows linearly */
     d.mipmap=1;d.dimension=GCM_TEXTURE_DIMS_2D;d.cubemap=GCM_FALSE;d.remap=t->opaque?remap_opaque():remap_identity();
     d.width=t->width;d.height=t->height;d.depth=1;d.location=GCM_LOCATION_RSX;d.pitch=t->pitch;d.offset=t->offset;
-    rsxInvalidateTextureCache(ctx,GCM_INVALIDATE_TEXTURE);rsxLoadTexture(ctx,0,&d);
+    if(texture_cache_dirty){rsxInvalidateTextureCache(ctx,GCM_INVALIDATE_TEXTURE);texture_cache_dirty=0;}
+    rsxLoadTexture(ctx,0,&d);
     rsxTextureControl(ctx,0,GCM_TRUE,0,0,GCM_TEXTURE_MAX_ANISO_1);
     int min=(t->min_filter==0x2600||t->min_filter==0x2700||t->min_filter==0x2702)?GCM_TEXTURE_NEAREST:GCM_TEXTURE_LINEAR;
     int mag=t->mag_filter==0x2600?GCM_TEXTURE_NEAREST:GCM_TEXTURE_LINEAR;
     rsxTextureFilter(ctx,0,0,min,mag,GCM_TEXTURE_CONVOLUTION_QUINCUNX);
     rsxTextureWrapMode(ctx,0,texture_wrap(t->wrap_s),texture_wrap(t->wrap_t),GCM_TEXTURE_CLAMP_TO_EDGE,0,GCM_TEXTURE_ZFUNC_LESS,0);
+    bound_rsx_texture=t;bound_rsx_generation=t->generation;
 }
 void stsv_tex_note_path(const void *s,int32_t n){if(n<0)n=0;if(n>191)n=191;memcpy(texture_path,s,n);texture_path[n]=0;}
 int32_t stsv_tex_would_fit(int32_t n){return n>=0&&(size_t)n<TEXTURE_BUDGET-texture_bytes;}
@@ -684,12 +709,15 @@ static void draw(int mode,int first,int count,int index_type,const void *indices
         read_attribute(uv,ix,tc,0);out[i].uv[0]=tc[0];out[i].uv[1]=tc[1];
     }
     u32 base=stream_offset+stream_cursor*sizeof(Vertex);
-    rsxLoadVertexProgram(ctx,vp,vp_ucode);rsxLoadFragmentProgramLocation(ctx,fp,fragment_offset,GCM_LOCATION_RSX);
+    if(!programs_bound){rsxLoadVertexProgram(ctx,vp,vp_ucode);rsxLoadFragmentProgramLocation(ctx,fp,fragment_offset,GCM_LOCATION_RSX);programs_bound=1;}
     rsxBindVertexArrayAttrib(ctx,GCM_VERTEX_ATTRIB_POS,0,base+offsetof(Vertex,pos),sizeof(Vertex),4,GCM_VERTEX_DATA_TYPE_F32,GCM_LOCATION_RSX);
     rsxBindVertexArrayAttrib(ctx,GCM_VERTEX_ATTRIB_COLOR0,0,base+offsetof(Vertex,color),sizeof(Vertex),4,GCM_VERTEX_DATA_TYPE_F32,GCM_LOCATION_RSX);
     rsxBindVertexArrayAttrib(ctx,GCM_VERTEX_ATTRIB_TEX0,0,base+offsetof(Vertex,uv),sizeof(Vertex),2,GCM_VERTEX_DATA_TYPE_F32,GCM_LOCATION_RSX);
     rsxInvalidateVertexCache(ctx);
     rsxDrawVertexArray(ctx,mode+1,0,count);stream_cursor+=count;
+    frame_draws++;frame_vertices+=count;
+    /* Rendering into a framebuffer writes texture memory the GPU may sample later. */
+    if(bound_framebuffer)texture_cache_dirty=1;
 }
 void glDrawArrays(int mode,int first,int count){draw(mode,first,count,0,NULL);}
 void glDrawElements(int mode,int count,int type,void *indices){draw(mode,0,count,type,indices);}
