@@ -62,6 +62,7 @@ int32_t stsv_touch_y(int32_t finger);
  * 32 bits and crashed the harness at the first setLooping. The 32-bit Vita
  * only worked by accident. VitaAudio.java @Includes this header. */
 int32_t stsv_sound_load(const void *data, int32_t len);
+int32_t stsv_sound_open_path(const void *path_utf8, int32_t len);
 void    stsv_sound_free(int32_t buffer);
 int32_t stsv_sound_play(int32_t buffer, float volume, float pitch, float pan, int32_t loop);
 void    stsv_sound_stop(int32_t source);

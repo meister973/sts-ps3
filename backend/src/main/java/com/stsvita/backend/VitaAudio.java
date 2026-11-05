@@ -1,6 +1,5 @@
 package com.stsvita.backend;
 
-import java.nio.ByteBuffer;
 
 import org.teavm.interop.Address;
 import org.teavm.interop.Import;
@@ -12,7 +11,6 @@ import com.badlogic.gdx.audio.AudioRecorder;
 import com.badlogic.gdx.audio.Music;
 import com.badlogic.gdx.audio.Sound;
 import com.badlogic.gdx.files.FileHandle;
-import com.badlogic.gdx.utils.BufferUtils;
 
 /**
  * Audio backend: OpenAL playback + libvorbisfile OGG decode (audio_glue.c).
@@ -22,8 +20,8 @@ import com.badlogic.gdx.utils.BufferUtils;
 @Include("stsvita_glue.h")
 public class VitaAudio implements Audio {
 
-    @Import(name = "stsv_sound_load")
-    static native int nSoundLoad(Address data, int len);
+    @Import(name = "stsv_sound_open_path")
+    static native int nSoundOpenPath(Address path, int len);
     @Import(name = "stsv_sound_free")
     static native void nSoundFree(int buffer);
     @Import(name = "stsv_sound_play")
@@ -88,19 +86,12 @@ public class VitaAudio implements Audio {
 
     @Override
     public Sound newSound(FileHandle fileHandle) {
-        byte[] ogg = fileHandle.readBytes();
-        if (ogg.length == 0) {
-            return new VitaSound(0);
-        }
-        // Copy to an unsafe buffer so its address is stable while the glue
-        // decodes it synchronously; release it once decoded.
-        ByteBuffer buffer = BufferUtils.newUnsafeByteBuffer(ogg.length);
-        BufferUtils.copy(ogg, 0, buffer, ogg.length);
-        int handle = nSoundLoad(Buffers.addr(buffer), ogg.length);
-        BufferUtils.disposeUnsafeByteBuffer(buffer);
+        // PS3: all sound effects decoded would need ~200 MB and even the encoded
+        // files ~31 MB, so the glue keeps only the path and decodes on demand.
+        byte[] path = fileHandle.path().getBytes();
+        int handle = nSoundOpenPath(Address.ofData(path), path.length);
         if (handle == 0) {
-            VitaNatives.log("[audio] newSound FAILED " + fileHandle.path()
-                    + " (" + ogg.length + " bytes)");
+            VitaNatives.log("[audio] newSound FAILED " + fileHandle.path());
         }
         return new VitaSound(handle);
     }

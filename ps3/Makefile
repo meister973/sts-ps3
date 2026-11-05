@@ -19,7 +19,7 @@ SHADER_OBJ := $(BUILD)/shaders/menu.vpo.o $(BUILD)/shaders/menu.fpo.o
 SHADER_HDR := $(BUILD)/shaders/menu_vpo.h $(BUILD)/shaders/menu_fpo.h
 INC := -Ips3/include -Ips3/gfx -Inative/src/glue -I$(BUILD)/shaders -I$(PORTLIBS)/include -I$(PORTLIBS)/include/freetype2 $(LIBPSL1GHT_INC)
 FLAGS := -O2 -fno-strict-aliasing -mcpu=cell -std=gnu11 -D_GNU_SOURCE -DTEAVM_PS3=1 $(MACHDEP) $(INC) -include $(GEN)/uchar.h -include $(GEN)/classes/java/lang/Class.h
-LIBRARIES := -L$(PORTLIBS)/lib $(LIBPSL1GHT_LIB) -lfreetype -lpng -lz -lrsx -lgcm_sys -lio -lsysutil -lrt -llv2 -lm
+LIBRARIES := -L$(PORTLIBS)/lib $(LIBPSL1GHT_LIB) -lfreetype -lvorbisfile -lvorbis -logg -laudio -lpng -lz -lrsx -lgcm_sys -lio -lsysutil -lrt -llv2 -lm
 
 .PHONY: all pkg
 all: $(TARGET).self
