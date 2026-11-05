@@ -182,7 +182,10 @@ static int bind_surface(void) {
     gcmSurface s;
     memset(&s,0,sizeof(s));
     s.type=GCM_SURFACE_TYPE_LINEAR; s.antiAlias=GCM_SURFACE_CENTER_1;
-    s.colorFormat=bound_framebuffer?GCM_SURFACE_A8R8G8B8:GCM_SURFACE_X8R8G8B8;
+    /* The back buffer needs real alpha too: with X8R8G8B8, transparent texels blended
+     * over pixels drawn earlier in the same call revealed what was there before the
+     * call (black boxes on the Ironclad's eye and gloves, square particles). */
+    s.colorFormat=GCM_SURFACE_A8R8G8B8;
     s.colorTarget=GCM_SURFACE_TARGET_0;
     s.colorLocation[0]=GCM_LOCATION_RSX;
     s.colorOffset[0]=back_offset[frame_index]; s.colorPitch[0]=pitch;
