@@ -28,6 +28,9 @@
 #define MAX_SHADERS 256
 #define MAX_VARIABLES 64
 #define STREAM_VERTICES 65536
+/* Each frame fills one half while the GPU may still read the other. */
+#define STREAM_HALF (STREAM_VERTICES/2)
+#define FRAME_LABEL 253
 /* 256 MiB RSX local memory minus ~13 MiB of display, depth and vertex buffers.
  * The menu alone uses ~124 MiB; a run adds character, map and monster art. */
 #define TEXTURE_BUDGET (232u*1024u*1024u)
@@ -75,6 +78,7 @@ static gcmContextData *ctx;
 static u32 width,height,pitch,back_offset[2],depth_offset,depth_pitch,depth_height,frame_index;
 static void *depth_pixels;
 static u32 stream_offset,stream_cursor,fragment_offset,label_value=1;
+static u32 stream_half,frame_serial,half_serial[2]; /* half_serial: frame that last used each half */
 static Vertex *stream;
 static rsxVertexProgram *vp;
 static rsxFragmentProgram *fp;
@@ -216,6 +220,7 @@ void stsv_gfx_init(void) {
     }
     depth_pixels=rsxMemalign(64,pitch*height);depth_pitch=pitch;depth_height=height;
     stream=rsxMemalign(128,STREAM_VERTICES*sizeof(Vertex));
+    *(vu32*)gcmGetLabelAddress(FRAME_LABEL)=0;
     if(!depth_pixels||!stream||rsxAddressToOffset(depth_pixels,&depth_offset)||rsxAddressToOffset(stream,&stream_offset))fatal("render memory exhausted");
     vp=(rsxVertexProgram*)menu_vpo;fp=(rsxFragmentProgram*)menu_fpo;
     void *code;u32 size;
@@ -262,12 +267,22 @@ static void capture_if_requested(unsigned presented){
         stsv_gfx_dump_frame(path);
     }
 }
+/* Mark this frame's half as in flight, switch halves, and wait only until the
+ * GPU has finished the frame that last used the half we are about to fill. */
+static void finish_stream_half(void){
+    vu32 *done=(vu32*)gcmGetLabelAddress(FRAME_LABEL);
+    rsxSetWriteBackendLabel(ctx,FRAME_LABEL,++frame_serial);
+    half_serial[stream_half]=frame_serial;
+    stream_half^=1;stream_cursor=0;
+    rsxFlushBuffer(ctx);
+    while((s32)(*done-half_serial[stream_half])<0)usleep(30);
+}
 void stsv_swap_buffers(void){
     stsv_ps3_pump_callbacks();
     if(!ctx)return;
     rsx_ring_make_room(ctx);
     int64_t fence_start=stsv_ps3_monotonic_us();
-    fence();stream_cursor=0;
+    finish_stream_half();
     static unsigned presented;
     static int64_t window_start,fence_us;
     static unsigned window_draws,window_vertices;
@@ -681,8 +696,8 @@ static void draw(int mode,int first,int count,int index_type,const void *indices
     if(!p||!p->linked||count<0||first<0){set_error(GL_INVALID_OPERATION);return;}
     if(++draw_count<=3){fprintf(stderr,"[PS3 draw] #%u program=%d mode=%d vertices=%d client=%d\n",draw_count,current_program,mode,count,bound_array==0);fflush(stderr);}
     if(mode<0||mode>6){set_error(GL_INVALID_ENUM);return;}
-    if(count>STREAM_VERTICES){set_error(GL_OUT_OF_MEMORY);return;}
-    if(stream_cursor+(unsigned)count>STREAM_VERTICES){fence();stream_cursor=0;}
+    if(count>STREAM_HALF){set_error(GL_OUT_OF_MEMORY);return;}
+    if(stream_cursor+(unsigned)count>STREAM_HALF){fence();stream_cursor=0;}
     rsx_ring_make_room(ctx);
     int pos=-1,col=-1,uv=-1;
     for(int i=0;i<p->attr_count;i++){if(!strcmp(p->attrs[i].name,"a_position"))pos=i;else if(!strcmp(p->attrs[i].name,"a_color"))col=i;else if(!strcmp(p->attrs[i].name,"a_texCoord0"))uv=i;}
@@ -697,7 +712,8 @@ static void draw(int mode,int first,int count,int index_type,const void *indices
     int ib=type_bytes(index_type);
     if(index_type&&index_type!=GL_UNSIGNED_BYTE&&index_type!=GL_UNSIGNED_SHORT&&index_type!=GL_UNSIGNED_INT){set_error(GL_INVALID_ENUM);return;}
     if(index_type&&bound_elements){Buffer *b=&buffers[bound_elements];size_t offset=(uintptr_t)indices;if(offset+(size_t)count*ib>b->size){set_error(GL_INVALID_OPERATION);return;}index_data=(const unsigned char*)b->data+offset;}
-    Vertex *out=stream+stream_cursor;
+    u32 first_vertex=stream_half*STREAM_HALF+stream_cursor;
+    Vertex *out=stream+first_vertex;
     for(int i=0;i<count;i++){
         unsigned ix=first+i;
         if(index_type){if(index_type==GL_UNSIGNED_BYTE)ix=index_data[i];else if(index_type==GL_UNSIGNED_SHORT){unsigned short v;memcpy(&v,index_data+i*2,2);ix=v;}else memcpy(&ix,index_data+i*4,4);}
@@ -708,7 +724,7 @@ static void draw(int mode,int first,int count,int index_type,const void *indices
         for(int j=0;j<4;j++)out[i].color[j]=c[j]*(color?color->value[j]:1);
         read_attribute(uv,ix,tc,0);out[i].uv[0]=tc[0];out[i].uv[1]=tc[1];
     }
-    u32 base=stream_offset+stream_cursor*sizeof(Vertex);
+    u32 base=stream_offset+first_vertex*sizeof(Vertex);
     if(!programs_bound){rsxLoadVertexProgram(ctx,vp,vp_ucode);rsxLoadFragmentProgramLocation(ctx,fp,fragment_offset,GCM_LOCATION_RSX);programs_bound=1;}
     rsxBindVertexArrayAttrib(ctx,GCM_VERTEX_ATTRIB_POS,0,base+offsetof(Vertex,pos),sizeof(Vertex),4,GCM_VERTEX_DATA_TYPE_F32,GCM_LOCATION_RSX);
     rsxBindVertexArrayAttrib(ctx,GCM_VERTEX_ATTRIB_COLOR0,0,base+offsetof(Vertex,color),sizeof(Vertex),4,GCM_VERTEX_DATA_TYPE_F32,GCM_LOCATION_RSX);
