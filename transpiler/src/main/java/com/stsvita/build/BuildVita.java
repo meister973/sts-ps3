@@ -39,12 +39,14 @@ public final class BuildVita {
         tool.setTargetDirectory(outDir);
         tool.setObfuscated(false);
         tool.setOptimizationLevel(TeaVMOptimizationLevel.ADVANCED);
-        // PS3 menu starting budget: malloc commits this entire Java heap.
-        // Native FreeType, decoded images, code, and buffers share 256 MiB XDR;
+        // malloc commits this entire Java heap up front. The game gets 209 MiB
+        // of user memory; at the menu an 80 MiB heap left 80 MiB of it unused,
+        // with ~13 MiB of other native use and ~41 MiB of Java in use. 128 MiB
+        // still leaves ~29 MiB for native growth plus the OSK's 8 MiB.
         // RSX textures and render targets use the separate graphics memory.
         // Keep min == max to prevent repeated shrink/grow collection cycles.
-        tool.setMinHeapSize(80 * 1024 * 1024);
-        tool.setMaxHeapSize(80 * 1024 * 1024);
+        tool.setMinHeapSize(128 * 1024 * 1024);
+        tool.setMaxHeapSize(128 * 1024 * 1024);
         tool.getTransformers().add(ClasslibShims.class.getName());
 
         // The game jar rides in via the classloader below; stubs/backend are

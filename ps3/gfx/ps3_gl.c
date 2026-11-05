@@ -28,7 +28,9 @@
 #define MAX_SHADERS 256
 #define MAX_VARIABLES 64
 #define STREAM_VERTICES 65536
-#define TEXTURE_BUDGET (208u*1024u*1024u)
+/* 256 MiB RSX local memory minus ~13 MiB of display, depth and vertex buffers.
+ * The menu alone uses ~124 MiB; a run adds character, map and monster art. */
+#define TEXTURE_BUDGET (232u*1024u*1024u)
 #define GL_INVALID_ENUM 0x0500
 #define GL_INVALID_VALUE 0x0501
 #define GL_INVALID_OPERATION 0x0502
@@ -227,6 +229,7 @@ void stsv_swap_buffers(void){
     static unsigned presented;
     presented++;
     stsv_ps3_input_next_frame();
+    if(presented==1||presented==600||presented%1800==0){char tag[32];snprintf(tag,sizeof(tag),"frame %u",presented);stsv_ps3_log_memory(tag);}
     if(presented%300==0){fprintf(stderr,"[PS3 frame] %u\n",presented);fflush(stderr);}
     if(presented==900){FILE *capture=fopen("/dev_hdd0/game/STSP00001/USRDIR/sts-capture-menu","rb");if(capture){fclose(capture);stsv_gfx_dump_frame("/dev_hdd0/tmp/sts-menu.ppm");}}
     if(!first_flip)while(gcmGetFlipStatus())usleep(200);
@@ -313,7 +316,7 @@ static int allocate_texture(Texture *t,int w,int h,int format,u32 byte_count,u32
     if(t->pixels){rsxFree(t->pixels);texture_bytes-=t->bytes;t->pixels=NULL;t->bytes=0;}
     if(byte_count>TEXTURE_BUDGET-texture_bytes){fprintf(stderr,"[PS3 texture] budget exceeded: %dx%d (%u), %s\n",w,h,byte_count,texture_path);set_error(GL_OUT_OF_MEMORY);return 0;}
     t->pixels=rsxMemalign(128,(byte_count+127)&~127u);
-    if(!t->pixels||rsxAddressToOffset(t->pixels,&t->offset)){set_error(GL_OUT_OF_MEMORY);return 0;}
+    if(!t->pixels||rsxAddressToOffset(t->pixels,&t->offset)){fprintf(stderr,"[PS3 texture] RSX allocation failed: %dx%d (%u, %u in use), %s\n",w,h,byte_count,texture_bytes,texture_path);if(t->pixels)rsxFree(t->pixels);t->pixels=NULL;set_error(GL_OUT_OF_MEMORY);return 0;}
     t->width=w;t->height=h;t->format=format;t->pitch=row_pitch;t->bytes=byte_count;texture_bytes+=byte_count;
     return 1;
 }
