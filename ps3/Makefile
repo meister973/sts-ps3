@@ -59,13 +59,15 @@ $(TARGET).elf: $(OBJECTS) $(SHADER_OBJ)
 $(TARGET).self: $(TARGET).elf
 	$(SELF) $< $@
 
+# The PSL1GHT pkg tool aborts past ~1024 entries and the assets alone are
+# ~3700, so the PKG carries only the program. Copy work/assets_vita to
+# USRDIR/assets separately (run-rpcs3.ps1 does it for RPCS3).
 pkg: all
+	rm -rf $(BUILD)/pkg
 	mkdir -p $(BUILD)/pkg/USRDIR
 	$(SELF_NPDRM) $(TARGET).elf $(BUILD)/pkg/USRDIR/EBOOT.BIN $(CONTENTID)
 	$(SFO) --title "$(TITLE)" --appid $(APPID) -f $(SFOXML) $(BUILD)/pkg/PARAM.SFO
 	cp $(ICON0) $(BUILD)/pkg/ICON0.PNG
-	mkdir -p $(BUILD)/pkg/USRDIR/assets
-	cp -a $(ASSETS)/. $(BUILD)/pkg/USRDIR/assets/
-	$(PKG) --contentid $(CONTENTID) $(BUILD)/pkg $(TARGET).pkg
+	$(PKG) --contentid $(CONTENTID) $(BUILD)/pkg/ $(TARGET).pkg
 
 -include $(OBJECTS:.o=.d)
