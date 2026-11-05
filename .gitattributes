@@ -1,0 +1,14 @@
+# Scripts and build files run inside Linux (Docker) must keep LF endings even
+# when Git on Windows converts text files to CRLF on checkout.
+*.sh text eol=lf
+*.py text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.java text eol=lf
+*.gradle text eol=lf
+Makefile text eol=lf
+Dockerfile text eol=lf
+*.vcg text eol=lf
+*.fcg text eol=lf
+# cmd.exe needs CRLF.
+*.bat text eol=crlf
