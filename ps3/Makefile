@@ -4,6 +4,8 @@ ifeq ($(strip $(PSL1GHT)),)
 $(error PSL1GHT is unset; run ps3/build.ps1)
 endif
 include $(PSL1GHT)/ppu_rules
+# Composed from the player's own title art by pipeline/make_icon.py when present.
+ICON0 := $(if $(wildcard work/icon/ICON0.PNG),work/icon/ICON0.PNG,$(ICON0))
 
 BUILD := build/ps3
 GEN := work/generated_c
@@ -59,15 +61,15 @@ $(TARGET).elf: $(OBJECTS) $(SHADER_OBJ)
 $(TARGET).self: $(TARGET).elf
 	$(SELF) $< $@
 
-# The PSL1GHT pkg tool aborts past ~1024 entries and the assets alone are
-# ~3700, so the PKG carries only the program. Copy work/assets_vita to
-# USRDIR/assets separately (run-rpcs3.ps1 does it for RPCS3).
+# PSL1GHT's pkg tool aborts past ~1024 entries and the assets alone are
+# ~3700, so make_pkg.py writes the same format without that limit.
 pkg: all
 	rm -rf $(BUILD)/pkg
-	mkdir -p $(BUILD)/pkg/USRDIR
+	mkdir -p $(BUILD)/pkg/USRDIR/assets
 	$(SELF_NPDRM) $(TARGET).elf $(BUILD)/pkg/USRDIR/EBOOT.BIN $(CONTENTID)
 	$(SFO) --title "$(TITLE)" --appid $(APPID) -f $(SFOXML) $(BUILD)/pkg/PARAM.SFO
 	cp $(ICON0) $(BUILD)/pkg/ICON0.PNG
-	$(PKG) --contentid $(CONTENTID) $(BUILD)/pkg/ $(TARGET).pkg
+	cp -a $(ASSETS)/. $(BUILD)/pkg/USRDIR/assets/
+	python3 ps3/make_pkg.py $(CONTENTID) $(BUILD)/pkg $(TARGET).pkg
 
 -include $(OBJECTS:.o=.d)

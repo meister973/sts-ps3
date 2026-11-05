@@ -1,0 +1,37 @@
+SLAY THE SPIRE PS3 - HOW TO BUILD THE PKG
+
+What this does
+This turns your own copy of Slay the Spire (from Steam) into a PS3 package
+file. The game's code and art are never downloaded or shared. Everything is
+made from your copy, on your own PC.
+
+What you need
+- A Windows PC.
+- Docker Desktop, installed and running.
+- About 15 GB of free disk space.
+- Your Steam copy of Slay the Spire.
+- An internet connection for the first run.
+
+Steps
+1) Install Docker Desktop from https://www.docker.com/products/docker-desktop/
+   and start it. Wait until it says Docker Desktop is running.
+2) Find desktop-1.0.jar. In Steam, right-click Slay the Spire, choose Manage,
+   then Browse local files.
+3) Drag desktop-1.0.jar onto build_pkg.bat.
+4) Wait. The first time takes 20 to 30 minutes. You can use the computer
+   for other things meanwhile.
+5) SlayTheSpire-PS3.pkg appears next to build_pkg.bat.
+
+Installing it
+- RPCS3 (on a PC): open RPCS3, go to File > Install Packages/Raps/Edats,
+  and pick SlayTheSpire-PS3.pkg.
+- PS3 (with HEN or CFW): copy the PKG to a USB stick. On the PS3, open
+  Package Manager > Install Package Files, and pick the PKG.
+
+If it fails
+Make sure Docker Desktop is running, then run build_pkg.bat again.
+It continues where it stopped.
+
+Note
+This is an experimental port. It has been tested in RPCS3, but not yet on
+a real PS3.
