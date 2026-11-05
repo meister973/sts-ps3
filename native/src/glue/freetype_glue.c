@@ -11,6 +11,7 @@
  */
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -302,6 +303,20 @@ int64_t stsv_ft_glyph_to_bitmap(int64_t glyph, int32_t renderMode) {
     stsv_ft_us_accum += stsv_wall_us() - t0;
     stsv_ft_calls_accum++;
     if (error) {
+        /* Describe the glyph FreeType refused to rasterize. */
+        FT_BBox box;
+        FT_Glyph failed = FT_PTR(FT_Glyph, glyph);
+        FT_Glyph_Get_CBox(failed, FT_GLYPH_BBOX_UNSCALED, &box);
+        fprintf(stderr, "[ft] To_Bitmap error %d format=0x%08lx cbox=(%ld,%ld)-(%ld,%ld) mode=%d\n",
+                (int)error, (unsigned long)failed->format, (long)box.xMin, (long)box.yMin,
+                (long)box.xMax, (long)box.yMax, (int)renderMode);
+        if (failed->format == FT_GLYPH_FORMAT_OUTLINE) {
+            FT_Outline *outline = &((FT_OutlineGlyph)failed)->outline;
+            fprintf(stderr, "[ft] outline points=%d contours=%d first=(%ld,%ld)\n",
+                    outline->n_points, outline->n_contours,
+                    outline->n_points ? (long)outline->points[0].x : 0L,
+                    outline->n_points ? (long)outline->points[0].y : 0L);
+        }
         stsv_ft_lastError = error;
         return 0;
     }
@@ -385,6 +400,16 @@ int32_t stsv_ft_gm_vert_advance(int64_t metrics) {
 /* --- stroker --- */
 
 void stsv_ft_stroker_set(int64_t stroker, int32_t radius, int32_t lineCap, int32_t lineJoin, int32_t miterLimit) {
+#if FREETYPE_MAJOR == 2 && FREETYPE_MINOR < 5
+    /* libGDX passes newer FreeType's joins (2 = MITER_VARIABLE, 3 = MITER_FIXED)
+     * with miter limit 0. Older FreeType (the PS3 portlib is 2.4.3) knows only
+     * ROUND/BEVEL/MITER and does not clamp the limit, so sharp corners divide by
+     * zero and the outline gets 2^31 coordinates (FT error 98 on char select). */
+    if (lineJoin >= 2)
+        lineJoin = FT_STROKER_LINEJOIN_MITER;
+    if (miterLimit < 0x10000)
+        miterLimit = 0x10000;
+#endif
     FT_Stroker_Set(FT_PTR(FT_Stroker, stroker), radius, (FT_Stroker_LineCap)lineCap, (FT_Stroker_LineJoin)lineJoin, miterLimit);
 }
 
