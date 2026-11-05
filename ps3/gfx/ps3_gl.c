@@ -64,6 +64,8 @@ typedef struct { char name[64]; int type,size; float value[16]; } Variable;
 typedef struct {
     int live,linked,vertex,fragment,attr_count,uniform_count,textured,alpha_correction;
     Variable attrs[MAX_VARIABLES],uniforms[MAX_VARIABLES];
+    int slots_ready,pos,col,uv; /* attribute and uniform lookups cached after link */
+    Variable *matrix,*color,*sampler;
 } Program;
 typedef struct { int enabled,size,type,normalized,stride,buffer; const void *pointer; float value[4]; void *snapshot; size_t snapshot_capacity,snapshot_size; } Attribute;
 typedef struct { float pos[4],color[4],uv[2]; } Vertex;
@@ -102,6 +104,7 @@ static char texture_path[192]="?";
 static int64_t upload_stats,subtex_stats;
 static unsigned compressed_upload_count,draw_count;
 static unsigned frame_draws,frame_vertices; /* reset at every swap */
+static int64_t draw_us; /* CPU time inside draw(), reset every stats window */
 
 static void set_error(int error) { if(!error_code) error_code=error; }
 void stsv_gl_unsupported(const char *name) {
@@ -293,9 +296,9 @@ void stsv_swap_buffers(void){
     if(presented==1||presented==600||presented%1800==0){char tag[32];snprintf(tag,sizeof(tag),"frame %u",presented);stsv_ps3_log_memory(tag);}
     if(presented%300==0){
         double frames=300.0;
-        fprintf(stderr,"[PS3 frame] %u: %.2f ms/frame, gpu wait %.2f ms, %.0f draws, %.0f vertices per frame\n",presented,
-                window_start?(now-window_start)/1000.0/frames:0.0,fence_us/1000.0/frames,window_draws/frames,window_vertices/frames);
-        fflush(stderr);window_start=now;fence_us=0;window_draws=window_vertices=0;
+        fprintf(stderr,"[PS3 frame] %u: %.2f ms/frame, gpu wait %.2f ms, draw cpu %.2f ms, %.0f draws, %.0f vertices per frame\n",presented,
+                window_start?(now-window_start)/1000.0/frames:0.0,fence_us/1000.0/frames,draw_us/1000.0/frames,window_draws/frames,window_vertices/frames);
+        fflush(stderr);window_start=now;fence_us=0;draw_us=0;window_draws=window_vertices=0;
     }
     capture_if_requested(presented);
     if(!first_flip)while(gcmGetFlipStatus())usleep(200);
@@ -573,7 +576,7 @@ static void add_declarations(Program *p,const char *source){
 void glLinkProgram(int id){
     if(id<=0||id>=MAX_PROGRAMS){set_error(GL_INVALID_VALUE);return;}
     Program *p=&programs[id];Shader *v=&shaders[p->vertex],*f=&shaders[p->fragment];
-    p->linked=v->compiled&&f->compiled;p->attr_count=p->uniform_count=0;
+    p->linked=v->compiled&&f->compiled;p->attr_count=p->uniform_count=0;p->slots_ready=0;
     if(!p->linked)return;
     add_declarations(p,v->source);add_declarations(p,f->source);
     p->textured=strstr(f->source,"texture2D")!=NULL;
@@ -690,7 +693,62 @@ static void read_attribute(int loc,unsigned vertex,float *out,int packed_color){
 }
 static Variable *find_uniform(Program *p,const char *name){for(int i=0;i<p->uniform_count;i++)if(!strcmp(p->uniforms[i].name,name))return &p->uniforms[i];return NULL;}
 static void transform(const float *m,const float *v,float *out){for(int i=0;i<4;i++)out[i]=m[i]*v[0]+m[4+i]*v[1]+m[8+i]*v[2]+m[12+i]*v[3];}
+/* Attribute and uniform locations never change after link; look them up once. */
+static void resolve_slots(Program *p){
+    p->pos=p->col=p->uv=-1;
+    for(int i=0;i<p->attr_count;i++){if(!strcmp(p->attrs[i].name,"a_position"))p->pos=i;else if(!strcmp(p->attrs[i].name,"a_color"))p->col=i;else if(!strcmp(p->attrs[i].name,"a_texCoord0"))p->uv=i;}
+    p->matrix=find_uniform(p,"u_projTrans");if(!p->matrix)p->matrix=find_uniform(p,"u_projModelView");if(!p->matrix)p->matrix=find_uniform(p,"u_projectionViewMatrix");
+    p->color=find_uniform(p,"u_color");p->sampler=find_uniform(p,"u_texture");
+    p->slots_ready=1;
+}
+typedef struct { const unsigned char *base; size_t stride,limit; } AttributeView;
+/* A direct view of an attribute with the exact type and size, or 0 for the generic path. */
+static int view_attribute(int loc,int type,int size,AttributeView *view){
+    if(loc<0||loc>=16)return 0;
+    Attribute *a=&attributes[loc];
+    if(!a->enabled||a->type!=type||a->size!=size)return 0;
+    size_t bytes=(size_t)type_bytes(type)*size;
+    view->stride=a->stride?(size_t)a->stride:bytes;
+    if(a->buffer){
+        Buffer *b=&buffers[a->buffer];size_t offset=(uintptr_t)a->pointer;
+        if(offset+bytes>b->size)return 0;
+        view->base=(const unsigned char*)b->data+offset;view->limit=(b->size-offset-bytes)/view->stride+1;return 1;
+    }
+    if(!a->pointer)return 0;
+    view->base=a->pointer;
+    view->limit=a->snapshot?(a->snapshot_size>=bytes?(a->snapshot_size-bytes)/view->stride+1:0):(size_t)-1;
+    return 1;
+}
+/* SpriteBatch/PolygonSpriteBatch layout: float2 position, packed ABGR colour, float2 UV.
+ * Returns how many vertices were written; the generic loop finishes the rest. */
+static int fill_sprite_vertices(Program *p,const Variable *matrix,const Variable *color,int first,int count,int index_type,const unsigned char *index_data,Vertex *out){
+    AttributeView pos,col,uv;
+    if(!matrix||!view_attribute(p->pos,GL_FLOAT,2,&pos)||!view_attribute(p->col,GL_UNSIGNED_BYTE,4,&col)||!view_attribute(p->uv,GL_FLOAT,2,&uv))return 0;
+    const float *m=matrix->value;
+    float tint[4];for(int j=0;j<4;j++)tint[j]=(color?color->value[j]:1)/255.0f;
+    if(p->alpha_correction)tint[3]*=255.0f/254.0f;
+    size_t limit=pos.limit<col.limit?pos.limit:col.limit;if(uv.limit<limit)limit=uv.limit;
+    for(int i=0;i<count;i++){
+        unsigned ix=first+i;
+        if(index_type==GL_UNSIGNED_SHORT){unsigned short v;memcpy(&v,index_data+i*2,2);ix=v;}
+        else if(index_type==GL_UNSIGNED_BYTE)ix=index_data[i];
+        else if(index_type)memcpy(&ix,index_data+i*4,4);
+        if(ix>=limit)return i;
+        float xy[2],st[2];u32 abgr;
+        memcpy(xy,pos.base+ix*pos.stride,8);memcpy(&abgr,col.base+ix*col.stride,4);memcpy(st,uv.base+ix*uv.stride,8);
+        for(int r=0;r<4;r++)out[i].pos[r]=m[r]*xy[0]+m[4+r]*xy[1]+m[12+r];
+        for(int j=0;j<4;j++)out[i].color[j]=((abgr>>(8*j))&255)*tint[j];
+        out[i].uv[0]=st[0];out[i].uv[1]=st[1];
+    }
+    return count;
+}
+static void draw_vertices(int mode,int first,int count,int index_type,const void *indices);
 static void draw(int mode,int first,int count,int index_type,const void *indices){
+    int64_t start=stsv_ps3_monotonic_us();
+    draw_vertices(mode,first,count,index_type,indices);
+    draw_us+=stsv_ps3_monotonic_us()-start;
+}
+static void draw_vertices(int mode,int first,int count,int index_type,const void *indices){
     if(!ctx||count==0)return;
     Program *p=program();
     if(!p||!p->linked||count<0||first<0){set_error(GL_INVALID_OPERATION);return;}
@@ -699,11 +757,10 @@ static void draw(int mode,int first,int count,int index_type,const void *indices
     if(count>STREAM_HALF){set_error(GL_OUT_OF_MEMORY);return;}
     if(stream_cursor+(unsigned)count>STREAM_HALF){fence();stream_cursor=0;}
     rsx_ring_make_room(ctx);
-    int pos=-1,col=-1,uv=-1;
-    for(int i=0;i<p->attr_count;i++){if(!strcmp(p->attrs[i].name,"a_position"))pos=i;else if(!strcmp(p->attrs[i].name,"a_color"))col=i;else if(!strcmp(p->attrs[i].name,"a_texCoord0"))uv=i;}
+    if(!p->slots_ready)resolve_slots(p);
+    int pos=p->pos,col=p->col,uv=p->uv;
     if(pos<0){set_error(GL_INVALID_OPERATION);return;}
-    Variable *matrix=find_uniform(p,"u_projTrans");if(!matrix)matrix=find_uniform(p,"u_projModelView");if(!matrix)matrix=find_uniform(p,"u_projectionViewMatrix");
-    Variable *color=find_uniform(p,"u_color"),*sampler=find_uniform(p,"u_texture");
+    Variable *matrix=p->matrix,*color=p->color,*sampler=p->sampler;
     int texunit=sampler?(int)sampler->value[0]:0;Texture *t=NULL;
     if(p->textured&&texunit>=0&&texunit<8&&valid_id(bound_texture[texunit]))t=&textures[bound_texture[texunit]];
     if(!t||!t->pixels)t=&white;
@@ -714,7 +771,8 @@ static void draw(int mode,int first,int count,int index_type,const void *indices
     if(index_type&&bound_elements){Buffer *b=&buffers[bound_elements];size_t offset=(uintptr_t)indices;if(offset+(size_t)count*ib>b->size){set_error(GL_INVALID_OPERATION);return;}index_data=(const unsigned char*)b->data+offset;}
     u32 first_vertex=stream_half*STREAM_HALF+stream_cursor;
     Vertex *out=stream+first_vertex;
-    for(int i=0;i<count;i++){
+    int done=fill_sprite_vertices(p,matrix,color,first,count,index_type,index_data,out);
+    for(int i=done;i<count;i++){
         unsigned ix=first+i;
         if(index_type){if(index_type==GL_UNSIGNED_BYTE)ix=index_data[i];else if(index_type==GL_UNSIGNED_SHORT){unsigned short v;memcpy(&v,index_data+i*2,2);ix=v;}else memcpy(&ix,index_data+i*4,4);}
         float v[4],c[4],tc[4];read_attribute(pos,ix,v,0);
