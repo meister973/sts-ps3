@@ -8,7 +8,8 @@
 
 #define PORTS 7
 #define SCRIPT_MAX_EVENTS 1024
-#define SCRIPT_PATH "/dev_hdd0/tmp/sts-pad-script.txt"
+/* Not dev_hdd0/tmp: RPCS3 empties it at boot. */
+#define SCRIPT_PATH "/dev_hdd0/game/STSP00001/USRDIR/sts-pad-script.txt"
 typedef struct { unsigned long long frame; unsigned int buttons; } PadEvent;
 static PadEvent script[SCRIPT_MAX_EVENTS];
 static int script_count;
@@ -117,6 +118,11 @@ void stsv_ps3_input_poll(void)
         ++script_next;
     }
     current_buttons |= (int)script_buttons;
+}
+
+int stsv_ps3_pad_script_active(void)
+{
+    return script_count > 0;
 }
 
 void stsv_ps3_input_next_frame(void)

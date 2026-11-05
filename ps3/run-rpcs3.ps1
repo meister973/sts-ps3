@@ -25,7 +25,7 @@ $gameLog = Join-Path $temporaryDirectory 'stsps3.log'
 # RPCS3 empties dev_hdd0/tmp at boot, so the capture request lives in the title's USRDIR.
 $captureFlag = Join-Path $usrDirectory 'sts-capture-menu'
 $capturePath = Join-Path $temporaryDirectory 'sts-menu.ppm'
-$padScriptPath = Join-Path $temporaryDirectory 'sts-pad-script.txt'
+$padScriptPath = Join-Path $usrDirectory 'sts-pad-script.txt'
 
 foreach ($required in @($executable, $elfPath, $sourceAssets)) {
     if (-not (Test-Path -LiteralPath $required)) { throw "Missing required path: $required" }

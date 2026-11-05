@@ -13,6 +13,7 @@ int stsv_ps3_exit_requested(void);
 void stsv_input_init(void);
 void stsv_ps3_input_poll(void);
 void stsv_ps3_input_next_frame(void);
+int stsv_ps3_pad_script_active(void);
 void stsv_audio_init(void);
 void stsv_ps3_ime_event(uint64_t status);
 int64_t stsv_ps3_monotonic_us(void);

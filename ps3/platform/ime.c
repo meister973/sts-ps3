@@ -30,6 +30,20 @@ static void copy_u16(uint16_t *dst, const uint16_t *src, int count)
     dst[i] = 0;
 }
 
+/* Scripted pad input reaches the game, not the system OSK overlay, so a
+ * diagnostic run would stall at name entry. Answer it with a fixed name. */
+static int32_t complete_with_scripted_name(void)
+{
+    static const char name[] = "PS3";
+    int i;
+    for (i = 0; name[i] != 0; ++i)
+        result_text[i] = (uint16_t)name[i];
+    result_text[i] = 0;
+    completion = 1;
+    fprintf(stderr, "[ps3 ime] pad script active; name entry answered with \"%s\"\n", name);
+    return 0;
+}
+
 int32_t stsv_ime_open(void *title_u16, void *initial_u16, int32_t max_len)
 {
     oskParam parameters;
@@ -38,6 +52,8 @@ int32_t stsv_ime_open(void *title_u16, void *initial_u16, int32_t max_len)
         return -1;
     if (max_len <= 0 || max_len > IME_MAX)
         max_len = IME_MAX;
+    if (stsv_ps3_pad_script_active())
+        return complete_with_scripted_name();
     int rc = sysMemContainerCreate(&container, OSK_CONTAINER_BYTES);
     if (rc != 0) {
         fprintf(stderr, "[ps3 ime] memory container failed 0x%08x\n", (unsigned)rc);
